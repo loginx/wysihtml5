@@ -5061,6 +5061,31 @@ wysihtml5.dom.parse = (function() {
         });
       };
     })(),
+
+    absolute_path: (function() {
+      var REG_EXP = /^\/.*/i;
+      return function(attributeValue) {
+        if (!attributeValue || !attributeValue.match(REG_EXP)) {
+          return null;
+        }
+        return attributeValue.replace(REG_EXP, function(match) {
+          return match.toLowerCase();
+        });
+      };
+    })(),
+
+    href: (function() {
+      var HTTP_REG_EXP = /^(https?:\/\/|mailto:)/i,
+          PATH_REG_EXP = /^\/.*/i;
+      return function(attributeValue) {
+        if (!attributeValue || (!attributeValue.match(HTTP_REG_EXP) && !attributeValue.match(PATH_REG_EXP))) {
+          return null;
+        }
+        return attributeValue.replace(HTTP_REG_EXP, function(match) {
+          return match.toLowerCase();
+        });
+      };
+    })(),
     
     alt: (function() {
       var REG_EXP = /[^ a-z0-9_\-]/gi;
@@ -5136,7 +5161,8 @@ wysihtml5.dom.parse = (function() {
   };
   
   return parse;
-})();/**
+})();
+/**
  * Checks for empty text node childs and removes them
  *
  * @param {Element} node The element in which to cleanup
@@ -6195,6 +6221,7 @@ wysihtml5.quirks.cleanPastedHTML = (function() {
      */
     scrollIntoView: function() {
       var doc           = this.doc,
+          tolerance     = 5, // px
           hasScrollBars = doc.documentElement.scrollHeight > doc.documentElement.offsetHeight,
           tempElement   = doc._wysihtml5ScrollIntoViewElement = doc._wysihtml5ScrollIntoViewElement || (function() {
             var element = doc.createElement("span");
@@ -6208,7 +6235,7 @@ wysihtml5.quirks.cleanPastedHTML = (function() {
         this.insertNode(tempElement);
         offsetTop = _getCumulativeOffsetTop(tempElement);
         tempElement.parentNode.removeChild(tempElement);
-        if (offsetTop > doc.body.scrollTop) {
+        if (offsetTop >= (doc.body.scrollTop + doc.documentElement.offsetHeight - tolerance)) {
           doc.body.scrollTop = offsetTop;
         }
       }
@@ -6985,7 +7012,7 @@ wysihtml5.Commands = Base.extend(
  */
 (function(wysihtml5) {
   var undef,
-      REG_EXP = /wysiwyg-font-size-[a-z\-]+/g;
+      REG_EXP = /wysiwyg-font-size-[0-9a-z\-]+/g;
   
   wysihtml5.commands.fontSize = {
     exec: function(composer, command, size) {
@@ -7008,7 +7035,7 @@ wysihtml5.Commands = Base.extend(
  */
 (function(wysihtml5) {
   var undef,
-      REG_EXP = /wysiwyg-color-[a-z]+/g;
+      REG_EXP = /wysiwyg-color-[0-9a-z]+/g;
   
   wysihtml5.commands.foreColor = {
     exec: function(composer, command, color) {
@@ -7405,9 +7432,12 @@ wysihtml5.Commands = Base.extend(
       }
 
       image = doc.createElement(NODE_NAME);
-
+      
       for (i in value) {
-        image[i] = value[i];
+        if (i === "className") {
+          i = "class";
+        }
+        image.setAttribute(i, attr);
       }
 
       composer.selection.insertNode(image);
@@ -7628,7 +7658,7 @@ wysihtml5.Commands = Base.extend(
 })(wysihtml5);(function(wysihtml5) {
   var undef,
       CLASS_NAME  = "wysiwyg-text-align-center",
-      REG_EXP     = /wysiwyg-text-align-[a-z]+/g;
+      REG_EXP     = /wysiwyg-text-align-[0-9a-z]+/g;
   
   wysihtml5.commands.justifyCenter = {
     exec: function(composer, command) {
@@ -7646,7 +7676,7 @@ wysihtml5.Commands = Base.extend(
 })(wysihtml5);(function(wysihtml5) {
   var undef,
       CLASS_NAME  = "wysiwyg-text-align-left",
-      REG_EXP     = /wysiwyg-text-align-[a-z]+/g;
+      REG_EXP     = /wysiwyg-text-align-[0-9a-z]+/g;
   
   wysihtml5.commands.justifyLeft = {
     exec: function(composer, command) {
@@ -7664,7 +7694,7 @@ wysihtml5.Commands = Base.extend(
 })(wysihtml5);(function(wysihtml5) {
   var undef,
       CLASS_NAME  = "wysiwyg-text-align-right",
-      REG_EXP     = /wysiwyg-text-align-[a-z]+/g;
+      REG_EXP     = /wysiwyg-text-align-[0-9a-z]+/g;
   
   wysihtml5.commands.justifyRight = {
     exec: function(composer, command) {
