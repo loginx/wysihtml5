@@ -92,7 +92,7 @@
     },
 
     hasPlaceholderSet: function() {
-      return this.getTextContent() == this.textarea.element.getAttribute("placeholder");
+      return this.getTextContent() == this.textarea.element.getAttribute("placeholder") && this.placeholderSet;
     },
 
     isEmpty: function() {
@@ -177,7 +177,7 @@
 
       // Simulate html5 autofocus on contentEditable element
       if (this.textarea.element.hasAttribute("autofocus") || document.querySelector(":focus") == this.textarea.element) {
-        setTimeout(function() { that.focus(); }, 100);
+        setTimeout(function() { that.focus(true); }, 100);
       }
 
       wysihtml5.quirks.insertLineBreakOnReturn(this);
@@ -307,7 +307,7 @@
     },
     
     _initUndoManager: function() {
-      new wysihtml5.UndoManager(this.parent);
+      this.undoManager = new wysihtml5.UndoManager(this.parent);
     }
   });
 })(wysihtml5);
