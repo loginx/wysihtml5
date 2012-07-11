@@ -91,6 +91,13 @@ wysihtml5.browser = (function() {
     hasCurrentStyleProperty: function() {
       return "currentStyle" in testElement;
     },
+    
+    /**
+     * Firefox on OSX navigates through history when hitting CMD + Arrow right/left
+     */
+    hasHistoryIssue: function() {
+      return isGecko;
+    },
 
     /**
      * Whether the browser inserts a <br> when pressing enter in a contentEditable element
@@ -116,29 +123,7 @@ wysihtml5.browser = (function() {
     supportsEventsInIframeCorrectly: function() {
       return !isOpera;
     },
-
-    /**
-     * Chrome & Safari only fire the ondrop/ondragend/... events when the ondragover event is cancelled
-     * with event.preventDefault
-     * Firefox 3.6 fires those events anyway, but the mozilla doc says that the dragover/dragenter event needs
-     * to be cancelled
-     */
-    firesOnDropOnlyWhenOnDragOverIsCancelled: function() {
-      return isWebKit || isGecko;
-    },
     
-    /**
-     * Whether the browser supports the event.dataTransfer property in a proper way
-     */
-    supportsDataTransfer: function() {
-      try {
-        // Firefox doesn't support dataTransfer in a safe way, it doesn't strip script code in the html payload (like Chrome does)
-        return isWebKit && (window.Clipboard || window.DataTransfer).prototype.getData;
-      } catch(e) {
-        return false;
-      }
-    },
-
     /**
      * Everything below IE9 doesn't know how to treat HTML5 tags
      *
@@ -293,14 +278,6 @@ wysihtml5.browser = (function() {
      */
     supportsSelectionModify: function() {
       return "getSelection" in window && "modify" in window.getSelection();
-    },
-    
-    /**
-     * Whether the browser supports the classList object for fast className manipulation
-     * See https://developer.mozilla.org/en/DOM/element.classList
-     */
-    supportsClassList: function() {
-      return "classList" in testElement;
     },
     
     /**
