@@ -3474,6 +3474,13 @@ wysihtml5.browser = (function() {
     hasCurrentStyleProperty: function() {
       return "currentStyle" in testElement;
     },
+    
+    /**
+     * Firefox on OSX navigates through history when hitting CMD + Arrow right/left
+     */
+    hasHistoryIssue: function() {
+      return isGecko;
+    },
 
     /**
      * Whether the browser inserts a <br> when pressing enter in a contentEditable element
@@ -3499,29 +3506,7 @@ wysihtml5.browser = (function() {
     supportsEventsInIframeCorrectly: function() {
       return !isOpera;
     },
-
-    /**
-     * Chrome & Safari only fire the ondrop/ondragend/... events when the ondragover event is cancelled
-     * with event.preventDefault
-     * Firefox 3.6 fires those events anyway, but the mozilla doc says that the dragover/dragenter event needs
-     * to be cancelled
-     */
-    firesOnDropOnlyWhenOnDragOverIsCancelled: function() {
-      return isWebKit || isGecko;
-    },
     
-    /**
-     * Whether the browser supports the event.dataTransfer property in a proper way
-     */
-    supportsDataTransfer: function() {
-      try {
-        // Firefox doesn't support dataTransfer in a safe way, it doesn't strip script code in the html payload (like Chrome does)
-        return isWebKit && (window.Clipboard || window.DataTransfer).prototype.getData;
-      } catch(e) {
-        return false;
-      }
-    },
-
     /**
      * Everything below IE9 doesn't know how to treat HTML5 tags
      *
@@ -3676,14 +3661,6 @@ wysihtml5.browser = (function() {
      */
     supportsSelectionModify: function() {
       return "getSelection" in window && "modify" in window.getSelection();
-    },
-    
-    /**
-     * Whether the browser supports the classList object for fast className manipulation
-     * See https://developer.mozilla.org/en/DOM/element.classList
-     */
-    supportsClassList: function() {
-      return "classList" in testElement;
     },
     
     /**
@@ -4058,12 +4035,12 @@ wysihtml5.browser = (function() {
   // Reveal url reg exp to the outside
   wysihtml5.dom.autoLink.URL_REG_EXP = URL_REG_EXP;
 })(wysihtml5);(function(wysihtml5) {
-  var supportsClassList = wysihtml5.browser.supportsClassList(),
-      api               = wysihtml5.dom;
+  var api = wysihtml5.dom;
   
   api.addClass = function(element, className) {
-    if (supportsClassList) {
-      return element.classList.add(className);
+    var classList = element.classList;
+    if (classList) {
+      return classList.add(className);
     }
     if (api.hasClass(element, className)) {
       return;
@@ -4072,16 +4049,18 @@ wysihtml5.browser = (function() {
   };
   
   api.removeClass = function(element, className) {
-    if (supportsClassList) {
-      return element.classList.remove(className);
+    var classList = element.classList;
+    if (classList) {
+      return classList.remove(className);
     }
     
     element.className = element.className.replace(new RegExp("(^|\\s+)" + className + "(\\s+|$)"), " ");
   };
   
   api.hasClass = function(element, className) {
-    if (supportsClassList) {
-      return element.classList.contains(className);
+    var classList = element.classList;
+    if (classList) {
+      return classList.contains(className);
     }
     
     var elementClassName = element.className;
@@ -6159,7 +6138,13 @@ wysihtml5.quirks.cleanPastedHTML = (function() {
       try { newRange.setEnd(rangeBackup.endContainer, rangeBackup.endOffset); } catch(e2) {}
       try { this.setSelection(newRange); } catch(e3) {}
     },
-
+    
+    set: function(node, offset) {
+      var newRange = rangy.createRange(this.doc);
+      newRange.setStart(node, offset || 0);
+      this.setSelection(newRange);
+    },
+    
     /**
      * Insert html at the caret position and move the cursor after the inserted html
      *
@@ -7764,8 +7749,9 @@ wysihtml5.Commands = Base.extend(
       Y_KEY               = 89,
       BACKSPACE_KEY       = 8,
       DELETE_KEY          = 46,
-      MAX_HISTORY_ENTRIES = 30,
-      CARET_PLACEHOLDER   = "_wysihtml5-caret-placeholder",
+      MAX_HISTORY_ENTRIES = 25,
+      DATA_ATTR_NODE      = "data-wysihtml5-selection-node",
+      DATA_ATTR_OFFSET    = "data-wysihtml5-selection-offset",
       UNDO_HTML           = '<span id="_wysihtml5-undo" class="_wysihtml5-temp">' + wysihtml5.INVISIBLE_SPACE + '</span>',
       REDO_HTML           = '<span id="_wysihtml5-redo" class="_wysihtml5-temp">' + wysihtml5.INVISIBLE_SPACE + '</span>',
       dom                 = wysihtml5.dom;
@@ -7777,12 +7763,6 @@ wysihtml5.Commands = Base.extend(
     }
   }
   
-  function silentRemove(element) {
-    if (element.parentNode) {
-      element.parentNode.removeChild(element);
-    }
-  }
-  
   wysihtml5.UndoManager = wysihtml5.lang.Dispatcher.extend(
     /** @scope wysihtml5.UndoManager.prototype */ {
     constructor: function(editor) {
@@ -7790,10 +7770,11 @@ wysihtml5.Commands = Base.extend(
       this.composer = editor.composer;
       this.element = this.composer.element;
       
-      var initialValue = this.composer.getValue();
-      this.history = [initialValue];
-      this.historyWithCaret = [initialValue];
-      this.position = 1;
+      this.position = 0;
+      this.historyStr = [];
+      this.historyDom = [];
+      
+      this.transact();
       
       this._observe();
     },
@@ -7892,32 +7873,46 @@ wysihtml5.Commands = Base.extend(
     },
     
     transact: function() {
-      var previousHtml  = this.history[this.position - 1],
-          currentHtml   = this.composer.getValue(),
-          doc           = this.composer.sandbox.getDocument(),
-          that          = this;
+      var previousHtml      = this.historyStr[this.position - 1],
+          currentHtml       = this.composer.getValue();
       
-      if (currentHtml == previousHtml) {
+      if (currentHtml === previousHtml) {
         return;
       }
       
-      var length = this.history.length = this.historyWithCaret.length = this.position;
+      var length = this.historyStr.length = this.historyDom.length = this.position;
       if (length > MAX_HISTORY_ENTRIES) {
-        this.history.shift();
-        this.historyWithCaret.shift();
+        this.historyStr.shift();
+        this.historyDom.shift();
         this.position--;
       }
       
       this.position++;
-          
-      this.composer.selection.executeAndRestoreSimple(function() {
-        var placeholder = doc.createElement("span");
-        placeholder.id = CARET_PLACEHOLDER;
-        that.composer.selection.insertNode(placeholder);
-        that.history.push(currentHtml);
-        that.historyWithCaret.push(that.composer.getValue());
-        silentRemove(placeholder);
-      });
+      
+      var range   = this.composer.selection.getRange(),
+          node    = range.startContainer || this.element,
+          offset  = range.startOffset    || 0,
+          element,
+          position;
+      
+      if (node.nodeType === wysihtml5.ELEMENT_NODE) {
+        element = node;
+      } else {
+        element  = node.parentNode;
+        position = this.getChildNodeIndex(element, node);
+      }
+      
+      element.setAttribute(DATA_ATTR_OFFSET, offset);
+      if (typeof(position) !== "undefined") {
+        element.setAttribute(DATA_ATTR_NODE, position);
+      }
+      
+      var clone = this.element.cloneNode(!!currentHtml);
+      this.historyDom.push(clone);
+      this.historyStr.push(currentHtml);
+      
+      element.removeAttribute(DATA_ATTR_OFFSET);
+      element.removeAttribute(DATA_ATTR_NODE);
     },
     
     undo: function() {
@@ -7927,7 +7922,7 @@ wysihtml5.Commands = Base.extend(
         return;
       }
       
-      this.set(this.historyWithCaret[--this.position - 1]);
+      this.set(this.historyDom[--this.position - 1]);
       this.editor.fire("undo:composer");
     },
     
@@ -7936,7 +7931,7 @@ wysihtml5.Commands = Base.extend(
         return;
       }
       
-      this.set(this.historyWithCaret[++this.position - 1]);
+      this.set(this.historyDom[++this.position - 1]);
       this.editor.fire("redo:composer");
     },
     
@@ -7945,18 +7940,57 @@ wysihtml5.Commands = Base.extend(
     },
     
     redoPossible: function() {
-      return this.position < this.history.length;
+      return this.position < this.historyStr.length;
     },
     
-    set: function(html) {
-      this.composer.setValue(html);
-      var placeholder = this.composer.sandbox.getDocument().getElementById(CARET_PLACEHOLDER);
-      if (placeholder) {
-        this.composer.selection.setAfter(placeholder);
-        silentRemove(placeholder);
-      } else {
-        this.editor.focus(true);
+    set: function(historyEntry) {
+      this.element.innerHTML = "";
+      
+      var i = 0,
+          childNodes = historyEntry.childNodes,
+          length = historyEntry.childNodes.length;
+      
+      for (; i<length; i++) {
+        this.element.appendChild(childNodes[i].cloneNode(true));
       }
+      
+      // Restore selection
+      var offset,
+          node,
+          position;
+      
+      if (historyEntry.hasAttribute(DATA_ATTR_OFFSET)) {
+        offset    = historyEntry.getAttribute(DATA_ATTR_OFFSET);
+        position  = historyEntry.getAttribute(DATA_ATTR_NODE);
+        node      = this.element;
+      } else {
+        node      = this.element.querySelector("[" + DATA_ATTR_OFFSET + "]") || this.element;
+        offset    = node.getAttribute(DATA_ATTR_OFFSET);
+        position  = node.getAttribute(DATA_ATTR_NODE);
+        node.removeAttribute(DATA_ATTR_OFFSET);
+        node.removeAttribute(DATA_ATTR_NODE);
+      }
+      
+      if (position !== null) {
+        node = this.getChildNodeByIndex(node, +position);
+      }
+      
+      this.composer.selection.set(node, offset);
+    },
+    
+    getChildNodeIndex: function(parent, child) {
+      var i           = 0,
+          childNodes  = parent.childNodes,
+          length      = childNodes.length;
+      for (; i<length; i++) {
+        if (childNodes[i] === child) {
+          return i;
+        }
+      }
+    },
+    
+    getChildNodeByIndex: function(parent, index) {
+      return parent.childNodes[index];
     }
   });
 })(wysihtml5);
@@ -8541,8 +8575,7 @@ wysihtml5.views.View = Base.extend(
         iframe              = this.sandbox.getIframe(),
         element             = this.element,
         focusBlurElement    = browser.supportsEventsInIframeCorrectly() ? element : this.sandbox.getWindow(),
-        // Firefox < 3.5 doesn't support the drop event, instead it supports a so called "dragdrop" event which behaves almost the same
-        pasteEvents         = browser.supportsEvent("drop") ? ["drop", "paste"] : ["dragdrop", "paste"];
+        pasteEvents         = ["drop", "paste"];
 
     // --------- destroy:composer event ---------
     dom.observe(iframe, "DOMNodeRemoved", function() {
@@ -8600,30 +8633,10 @@ wysihtml5.views.View = Base.extend(
       that.parent.fire("unset_placeholder");
     });
 
-    if (browser.firesOnDropOnlyWhenOnDragOverIsCancelled()) {
-      dom.observe(element, ["dragover", "dragenter"], function(event) {
-        event.preventDefault();
-      });
-    }
-
     dom.observe(element, pasteEvents, function(event) {
-      var dataTransfer = event.dataTransfer,
-          data;
-
-      if (dataTransfer && browser.supportsDataTransfer()) {
-        data = dataTransfer.getData("text/html") || dataTransfer.getData("text/plain");
-      }
-      if (data) {
-        element.focus();
-        that.commands.exec("insertHTML", data);
+      setTimeout(function() {
         that.parent.fire("paste").fire("paste:composer");
-        event.stopPropagation();
-        event.preventDefault();
-      } else {
-        setTimeout(function() {
-          that.parent.fire("paste").fire("paste:composer");
-        }, 0);
-      }
+      }, 0);
     });
 
     // --------- neword event ---------
@@ -8644,6 +8657,34 @@ wysihtml5.views.View = Base.extend(
         var target = event.target;
         if (target.nodeName === "IMG") {
           that.selection.selectNode(target);
+          event.preventDefault();
+        }
+      });
+    }
+    
+    if (browser.hasHistoryIssue() && wysihtml5.browser.supportsSelectionModify()) {
+      dom.observe(element, "keydown", function(event) {
+        if (!event.metaKey && !event.ctrlKey) {
+          return;
+        }
+        
+        var keyCode   = event.keyCode,
+            win       = element.ownerDocument.defaultView,
+            selection = win.getSelection();
+        
+        if (keyCode === 37 || keyCode === 39) {
+          if (keyCode === 37) {
+            selection.modify("extend", "left", "lineboundary");
+            if (!event.shiftKey) {
+              selection.collapseToStart();
+            }
+          }
+          if (keyCode === 39) {
+            selection.modify("extend", "right", "lineboundary");
+            if (!event.shiftKey) {
+              selection.collapseToEnd();
+            }
+          }
           event.preventDefault();
         }
       });
